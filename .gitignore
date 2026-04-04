@@ -1,0 +1,37 @@
+# Go build outputs
+bin/
+dist/
+build/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Coverage and profiling
+coverage.out
+*.coverprofile
+cover.out
+cpu.prof
+mem.prof
+
+# Dependency directories
+vendor/
+
+# Environment and local config
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# IDE and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

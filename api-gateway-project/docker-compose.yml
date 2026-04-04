@@ -1,0 +1,30 @@
+version : '3.8' # defines the version of docker-compose
+
+services: #containers that we want to run
+  gateway: #name of the container
+    build: ./gateway #path to the Dockerfile
+    ports:
+      - "3000:3000" #maps port 3000 of the container to port 3000 of the host machine
+    depends_on:
+      - user-service #gateway depends on user-service
+      - product-service #gateway depends on product-service
+    networks:
+      - gateway_net
+
+  user-service: #name of the container
+    build: ./user-service #path to the Dockerfile
+    ports:
+      - "3002:3002" #maps port 3002 of the container to port 3002 of the host machine
+    networks:
+      - gateway_net
+
+  product-service: #name of the container
+    build: ./product-service #path to the Dockerfile
+    ports:
+      - "3001:3001" #maps port 3001 of the container to port 3001 of the host machine
+    networks:
+      - gateway_net
+
+networks:
+  gateway_net:            # Defines a custom network
+    driver: bridge        # Default Docker network driver (isolated network)
