@@ -17,3 +17,5 @@ Scenario 4 — /health with no token:
 Request hits mux → matches /health → goes directly to health_handler
 health_handler writes 200 → done
 Logger never runs. Auth never runs. (It's outside the middleware chain)
+
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3Nzk5OTA0NzgsImlhdCI6MTc3OTkwNDA3OCwidXNlcl9pZCI6InUxIn0.LivsavdVWRd8sSO2KQdXf8rS8yA4TT9sfqCAr6aGB1I
