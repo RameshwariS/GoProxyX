@@ -1,0 +1,19 @@
+Scenario 1 — No token:
+Request hits Logger → Logger starts timer, calls Auth
+Auth reads header → empty → writes 401 → returns
+Logger resumes → logs "status=401 latency=0ms" → done
+Handler never runs. Service never called.
+Scenario 2 — Bad/expired token:
+Request hits Logger → Logger starts timer, calls Auth
+Auth reads token → library says invalid → writes 401 → returns
+Logger resumes → logs "status=401" → done
+Handler never runs. Service never called.
+Scenario 3 — Valid token:
+Request hits Logger → starts timer → calls Auth
+Auth validates → extracts user_id → puts in context → calls handler
+handler checks path → proxies to user-service → gets response → writes 200
+Logger resumes → logs "status=200 latency=5ms" → done
+Scenario 4 — /health with no token:
+Request hits mux → matches /health → goes directly to health_handler
+health_handler writes 200 → done
+Logger never runs. Auth never runs. (It's outside the middleware chain)

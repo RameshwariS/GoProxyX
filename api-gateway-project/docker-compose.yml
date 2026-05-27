@@ -10,6 +10,8 @@ services: #containers that we want to run
       - product-service #gateway depends on product-service
     networks:
       - gateway_net
+    environment:
+      - JWT_SECRET=my_key
 
   user-service: #name of the container
     build: ./user-service #path to the Dockerfile

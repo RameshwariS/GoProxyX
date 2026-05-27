@@ -1,11 +1,13 @@
 package main
 
 import (
+"github.com/RameshwariS/gateway/middleware"
 	"fmt"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"os"
 )
 func health_handler(res http.ResponseWriter, req *http.Request){
 	res.WriteHeader(http.StatusOK)	
@@ -36,11 +38,31 @@ func handler(res http.ResponseWriter,req *http.Request){
 	
 }
 
+// The issue: if you wrap handler with middleware, it applies to all routes including /health. But you don't want /health to require a JWT token — health checks should always work.
+// Fix: use a custom mux so you can control which routes get middleware and which don't.
+
 func main(){
-	http.HandleFunc("/health",health_handler)
+	// http.HandleFunc("/health",health_handler)
 
 	// will take the input from the request and then check where to send
-	http.HandleFunc("/",handler)
+	// http.HandleFunc("/",handler)
 
-	http.ListenAndServe(":3000",nil)
+ secret := os.Getenv("JWT_SECRET")
+    if secret == "" {
+        secret = "my_key"  // fallback for local dev
+    }
+
+	mux := http.NewServeMux()
+	//no middleware
+	mux.HandleFunc("/health",health_handler)
+
+	protected := middleware.Logger(
+		middleware.Auth(secret)(
+			http.HandlerFunc(handler),
+		),
+	)
+	mux.Handle("/",protected)
+
+
+	http.ListenAndServe(":3000",mux)
 }
