@@ -1,16 +1,19 @@
 package main
 
 import (
+	"context"
 	"fmt"
-	"github.com/RameshwariS/gateway/middleware"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"os/signal"
 	"strings"
-	"github.com/redis/go-redis/v9"
-	"context"
+	"syscall"
 	"time"
+
+	"github.com/RameshwariS/gateway/middleware"
+	"github.com/redis/go-redis/v9"
 )
 
 func health_handler(res http.ResponseWriter, req *http.Request) {
@@ -22,8 +25,17 @@ func handler(res http.ResponseWriter, req *http.Request) {
 
 	if strings.HasPrefix(path, "/users") {
 		//proxy to user service
-		target, _ := url.Parse("http://user-service:3002")  // converts string to url object
-		proxy := httputil.NewSingleHostReverseProxy(target) // creates reverse proxy object
+		target, _ := url.Parse("http://user-service:3002") // converts string to url object
+
+		proxy := httputil.NewSingleHostReverseProxy(target)
+
+		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+			fmt.Println("Proxy error:", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadGateway)
+			fmt.Fprintf(w, `{"error":"service unavailable"}`)
+		}
+
 		proxy.ServeHTTP(res, req)
 		return
 
@@ -31,6 +43,14 @@ func handler(res http.ResponseWriter, req *http.Request) {
 		//proxy to product service
 		target, _ := url.Parse("http://product-service:3001")
 		proxy := httputil.NewSingleHostReverseProxy(target)
+
+		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+			fmt.Println("Proxy error:", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadGateway)
+			fmt.Fprintf(w, `{"error":"service unavailable"}`)
+		}
+
 		proxy.ServeHTTP(res, req)
 		return
 	} else if path == "/health" {
@@ -57,7 +77,7 @@ func main() {
 	}
 
 	redisAddr := os.Getenv("REDIS_ADDR")
-	if redisAddr ==""{
+	if redisAddr == "" {
 		redisAddr = "localhost:6379"
 	}
 
@@ -65,11 +85,11 @@ func main() {
 		Addr: redisAddr,
 	})
 
-	ctx,cancel := context.WithTimeout(context.Background(),3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
 	if err := rdb.Ping(ctx).Err(); err != nil {
-	   fmt.Println("WARNING: Redis not reachable:", err)
+		fmt.Println("WARNING: Redis not reachable:", err)
 	} else {
 		fmt.Println("Redis connected:", redisAddr)
 	}
@@ -79,12 +99,38 @@ func main() {
 
 	protected := middleware.Logger(
 		middleware.Auth(secret)(
-			middleware.RateLimit(rdb,10,2.0)(
+			middleware.RateLimit(rdb, 10, 2.0)(
 				http.HandlerFunc(handler),
 			),
 		),
 	)
 	mux.Handle("/", protected)
 
-	http.ListenAndServe(":3000", mux)
+	// http.ListenAndServe(":3000", mux)
+	// for graceful shutdown
+	srv := &http.Server{
+		Addr:    ":3000",
+		Handler: mux,
+	}
+
+	go func() {
+		fmt.Println("Gateway running on 3000")
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			fmt.Println("Server error", err)
+		}
+	}()
+
+	// getting signal
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	fmt.Println("Shutting down...")
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(),10*time.Second)
+	defer shutdownCancel()
+	
+	if err := srv.Shutdown(shutdownCtx); err != nil{
+		fmt.Println("forced shutdown",err)
+	}
+	fmt.Println("Gateway stopped")
 }
