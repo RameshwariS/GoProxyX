@@ -8,6 +8,9 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"github.com/redis/go-redis/v9"
+	"context"
+	"time"
 )
 
 func health_handler(res http.ResponseWriter, req *http.Request) {
@@ -53,13 +56,32 @@ func main() {
 		secret = "my_key" // fallback for local dev
 	}
 
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr ==""{
+		redisAddr = "localhost:6379"
+	}
+
+	rdb := redis.NewClient(&redis.Options{
+		Addr: redisAddr,
+	})
+
+	ctx,cancel := context.WithTimeout(context.Background(),3*time.Second)
+	defer cancel()
+
+	if err := rdb.Ping(ctx).Err(); err != nil {
+	   fmt.Println("WARNING: Redis not reachable:", err)
+	} else {
+		fmt.Println("Redis connected:", redisAddr)
+	}
 	mux := http.NewServeMux()
 	//no middleware
 	mux.HandleFunc("/health", health_handler)
 
 	protected := middleware.Logger(
 		middleware.Auth(secret)(
-			http.HandlerFunc(handler),
+			middleware.RateLimit(rdb,10,2.0)(
+				http.HandlerFunc(handler),
+			),
 		),
 	)
 	mux.Handle("/", protected)

@@ -8,10 +8,12 @@ services: #containers that we want to run
     depends_on:
       - user-service #gateway depends on user-service
       - product-service #gateway depends on product-service
+      - redis
     networks:
       - gateway_net
     environment:
       - JWT_SECRET=my_key
+      - REDIS_ADDR=redis:6379
 
   user-service: #name of the container
     build: ./user-service #path to the Dockerfile
@@ -26,7 +28,14 @@ services: #containers that we want to run
       - "3001:3001" #maps port 3001 of the container to port 3001 of the host machine
     networks:
       - gateway_net
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379" #maps port 6379 of the container to port 6379 of the host machine
+    networks:
+      - gateway_net
 
 networks:
   gateway_net:            # Defines a custom network
-    driver: bridge        # Default Docker network driver (isolated network)
+    driver: bridge  
+  

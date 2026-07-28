@@ -1,0 +1,79 @@
+Scenario 1 — No token:
+Request hits Logger → Logger starts timer, calls Auth
+Auth reads header → empty → writes 401 → returns
+Logger resumes → logs "status=401 latency=0ms" → done
+Handler never runs. Service never called.
+Scenario 2 — Bad/expired token:
+Request hits Logger → Logger starts timer, calls Auth
+Auth reads token → library says invalid → writes 401 → returns
+Logger resumes → logs "status=401" → done
+Handler never runs. Service never called.
+Scenario 3 — Valid token:
+Request hits Logger → starts timer → calls Auth
+Auth validates → extracts user_id → puts in context → calls handler
+handler checks path → proxies to user-service → gets response → writes 200
+Logger resumes → logs "status=200 latency=5ms" → done
+Scenario 4 — /health with no token:
+Request hits mux → matches /health → goes directly to health_handler
+health_handler writes 200 → done
+Logger never runs. Auth never runs. (It's outside the middleware chain)
+
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3Nzk5OTA0NzgsImlhdCI6MTc3OTkwNDA3OCwidXNlcl9pZCI6InUxIn0.LivsavdVWRd8sSO2KQdXf8rS8yA4TT9sfqCAr6aGB1I
+
+Satge 4
+we need redis for storing the count 
+to implement the rate limiting
+redis stores the total count of requests so every user will have synced 
+number and rate limiting works properly
+
+redis will store:
+    Key:   "ratelimit:user:u1"
+
+    Fields:
+    tokens      → how many tokens currently in the bucket  (e.g. 7)
+    last_refill → when we last added tokens  (e.g. 1720000000.523)
+
+Lua script will read from redis and if count is gtg then will accept the request
+and updates the redis fields
+
+elapsed = how many seconds passed since last time we updated this bucket.
+
+Example: last_refill was 10 seconds ago, refill_rate is 2 per second → refill = 10 × 2 = 20 new tokens.
+
+math.min(max_tokens, tokens + refill) = add the new tokens but cap at max. If max is 10, you can't have 11 tokens. Bucket can't overflow.
+
+
+
+
+                    ┌─────────────────────────────────────┐
+Request arrives     │                                     │
+      │             │         YOUR GATEWAY                │
+      ▼             │                                     │
+  ┌───────┐         │                                     │
+  │LOGGER │ starts  │                                     │
+  │       │ timer   │                                     │
+  └───┬───┘         │                                     │
+      │             │                                     │
+      ▼             │                                     │
+  ┌───────┐         │                                     │
+  │ AUTH  │ checks  │                                     │
+  │       │ token   │                                     │
+  └───┬───┘         │                                     │
+      │             │                                     │
+      │  ✅valid   │         ┌─────────┐                │
+      ▼             │         │  REDIS  │                │
+  ┌──────────┐      │         │         │                │
+  │RATELIMIT │─────────────►  │ u1: 7   │                │
+  │          │◄─────────────  │ tokens  │                │
+  └──────────┘      │         └─────────┘                │
+      │             │                                     │
+      │  ✅ has     │                                     │
+      │  tokens     │                                     │
+      ▼             │                                     │
+  ┌───────┐         │                                     │
+  │HANDLER│         │                                     │
+  │       │         │                                     │
+  └───┬───┘         └─────────────────────────────────────┘
+      │
+      ▼
+ user-service
