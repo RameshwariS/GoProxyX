@@ -87,6 +87,7 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+	fmt.Println("context",ctx)
 
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		fmt.Println("WARNING: Redis not reachable:", err)

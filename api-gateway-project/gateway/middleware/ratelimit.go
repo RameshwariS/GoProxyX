@@ -89,7 +89,6 @@ func RateLimit(rdb *redis.Client, maxTokens int, refillRate float64) func(http.H
 				w.WriteHeader(http.StatusTooManyRequests)
 				return
 			}
-
 			// Step 9 — allowed, continue to handler
 			next.ServeHTTP(w, r)
 

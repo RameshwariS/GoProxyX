@@ -77,3 +77,9 @@ Request arrives     │                                     │
       │
       ▼
  user-service
+
+
+ why to use context 
+ Problem: Your server handles thousands of requests at the same time. All of them would share that one variable. Request A sets userID = "u1", Request B immediately sets userID = "u2", Request A reads it and gets "u2" — wrong user. Everything breaks.
+
+Context is per request. Each request has its own context, its own data. No mixing.

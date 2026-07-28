@@ -42,7 +42,9 @@ func Auth(secret string) func(http.Handler) http.Handler {
 
 			// Context is the solution. Every HTTP request carries a small key-value bag with it. You can put things in, and the next handler can take them out.
 			ctx := context.WithValue(r.Context(), "user_id", user_id)
+			// Attach that new context to the request
 			r = r.WithContext(ctx)
+
 			next.ServeHTTP(w, r)
 
 		})
