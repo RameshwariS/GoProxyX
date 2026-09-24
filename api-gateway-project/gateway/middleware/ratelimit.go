@@ -2,6 +2,8 @@ package middleware
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -15,85 +17,106 @@ import (
 // ARGV[2]  → max tokens     (e.g. 10)
 // ARGV[3]  → refill rate    (e.g. 2.0  meaning 2 tokens per second)
 
-
+// tokenBucketLuaScript atomically refills and consumes a token bucket. Redis
+// supplies the clock so requests handled by different gateway instances use
+// the same time source.
 const tokenBucketLuaScript = `
--- reading from current state
 local key = KEYS[1]
-local curr_time = ARGV[1]
-local maxTokens = ARGV[2]
-local refillRate = ARGV[3]
--- reading from redis
-local data = redis.call("HMGET", key, "tokens", "last_refill")  -- command,arg1(variable),arg2(fixed),arg3
-local tokens = tonumber(data[1])
-local lastRefill = tonumber(data[2])
-if tokens == nil then
-	tokens = tonumber(maxTokens) - 1
-	redis.call("HMSET",key,"tokens",tokens,"last_refill",curr_time)
-	redis.call("EXPIRE",key,3600)
-	return {1,tokens} --  1 means allowed 
-end
--- if tokens != nil that means key exist and have to allocate the remaining bucket
-local elapsed = curr_time - lastRefill
-local refill = elapsed * tonumber(refillRate)
-tokens = math.min(tonumber(maxTokens),tokens+refill)
+local max_tokens = tonumber(ARGV[1])
+local refill_rate = tonumber(ARGV[2])
+local cost = tonumber(ARGV[3])
 
-if tokens < 1 then
--- to save the partial tokens like if tokens = 0.5 then we will save it in redis
-	redis.call("HMSET",key,"tokens",tokens,"last_refill",curr_time)
-	redis.call("EXPIRE",key,3600)
-	return {0,0} -- denying req
+local t = redis.call('TIME')
+local now = tonumber(t[1]) + tonumber(t[2]) / 1000000
+
+local data = redis.call('HMGET', key, 'tokens', 'last_refill')
+local tokens = tonumber(data[1])
+local last_refill = tonumber(data[2])
+if tokens == nil then
+  tokens = max_tokens
 end
--- allowing req
-tokens= tokens -1
-redis.call("HMSET",key,"tokens",tokens,"last_refill",curr_time)
-redis.call("EXPIRE",key,3600)
-return {1,math.floor(tokens)}
+if last_refill == nil then
+  last_refill = now
+end
+
+tokens = math.min(max_tokens, tokens + math.max(0, now - last_refill) * refill_rate)
+
+local allowed = 0
+local retry_after = 0
+if tokens >= cost then
+  tokens = tokens - cost
+  allowed = 1
+else
+  retry_after = math.ceil((cost - tokens) / refill_rate)
+end
+
+redis.call('HSET', key, 'tokens', tokens, 'last_refill', now)
+redis.call('EXPIRE', key, math.ceil(max_tokens / refill_rate) * 2)
+return {allowed, math.floor(tokens), retry_after}
 `
 
+var tokenBucket = redis.NewScript(tokenBucketLuaScript)
+
+// RateLimitConfig controls the token bucket and Redis failure behavior.
+type RateLimitConfig struct {
+	Max      int
+	Rate     float64
+	FailOpen bool
+}
+
+// RateLimit preserves the original API and allows requests through if Redis
+// is unavailable, matching the middleware's previous behavior.
 func RateLimit(rdb *redis.Client, maxTokens int, refillRate float64) func(http.Handler) http.Handler {
+	return RateLimitWithConfig(rdb, RateLimitConfig{
+		Max:      maxTokens,
+		Rate:     refillRate,
+		FailOpen: true,
+	})
+}
+
+// RateLimitWithConfig creates a per-user token bucket middleware.
+func RateLimitWithConfig(rdb *redis.Client, cfg RateLimitConfig) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// get user id stored by auth in context (safe extraction)
-			v := r.Context().Value("user_id")
-			if v == nil {
-				w.WriteHeader(http.StatusUnauthorized)
+			uid, ok := UserIDFrom(r.Context())
+			if !ok {
+				WriteError(w, http.StatusUnauthorized, "unauthenticated", "no user in context")
 				return
 			}
-			userID, ok := v.(string)
-			if !ok || userID == "" {
-				w.WriteHeader(http.StatusUnauthorized)
-				return
-			}
-			key := "ratelimit:user:" + userID
-			curr_time := float64(time.Now().Local().UnixMilli()) / 1000.0
 
-			result , err := redis.NewScript(tokenBucketLuaScript).Run(
-				context.Background(),
-				rdb,
-				[]string{key},
-				curr_time,maxTokens,refillRate,
-			).Slice()
-			if err != nil{
-				next.ServeHTTP(w,r)
+			if rdb == nil || cfg.Max <= 0 || cfg.Rate <= 0 {
+				slog.Error("invalid rate limiter configuration", "max", cfg.Max, "rate", cfg.Rate)
+				WriteError(w, http.StatusServiceUnavailable, "rate_limiter_unavailable", "try again shortly")
 				return
 			}
-			allowed := result[0].(int64)
-			remaining := result[1].(int64)
-			
-			// Step 7 — always tell the client their limit status
-			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(maxTokens))
+
+			ctx, cancel := context.WithTimeout(r.Context(), 100*time.Millisecond)
+			defer cancel()
+
+			result, err := tokenBucket.Run(ctx, rdb, []string{"ratelimit:user:" + uid}, cfg.Max, cfg.Rate, 1).Int64Slice()
+			if err != nil || len(result) != 3 {
+				if err == nil {
+					err = errors.New("unexpected result from rate limiter")
+				}
+				slog.Error("rate limiter backend error", "err", err, "fail_open", cfg.FailOpen)
+				if cfg.FailOpen {
+					next.ServeHTTP(w, r)
+					return
+				}
+				WriteError(w, http.StatusServiceUnavailable, "rate_limiter_unavailable", "try again shortly")
+				return
+			}
+
+			allowed, remaining, retryAfter := result[0], result[1], result[2]
+			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(cfg.Max))
 			w.Header().Set("X-RateLimit-Remaining", strconv.FormatInt(remaining, 10))
-
-			// Step 8 — rejected, bucket empty
 			if allowed == 0 {
-				w.Header().Set("Retry-After", "1")
-				w.WriteHeader(http.StatusTooManyRequests)
+				w.Header().Set("Retry-After", strconv.FormatInt(retryAfter, 10))
+				WriteError(w, http.StatusTooManyRequests, "rate_limited", "too many requests")
 				return
 			}
-			// Step 9 — allowed, continue to handler
-			next.ServeHTTP(w, r)
 
+			next.ServeHTTP(w, r)
 		})
 	}
-
 }

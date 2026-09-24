@@ -16,6 +16,12 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+type Route struct {
+  Prefix string
+  Proxy  http.Handler
+}
+
+
 func health_handler(res http.ResponseWriter, req *http.Request) {
 	res.WriteHeader(http.StatusOK)
 }
@@ -99,14 +105,9 @@ func main() {
 	//no middleware
 	mux.HandleFunc("/health", health_handler)
 
-	protected := 
-	middleware.Logger(
-		middleware.Auth(secret)(
-			middleware.RateLimit(rdb, 10, 2.0)(
-				http.HandlerFunc(handler),
-			),
-		),
-	)
+protected := middleware.RequestID(middleware.Logger(middleware.Recover(
+  middleware.Auth(secret)(middleware.RateLimit(rdb, cfg)(router)))))
+
 	mux.Handle("/", protected)
 
 	// http.ListenAndServe(":3000", mux)
