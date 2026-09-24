@@ -1,4 +1,5 @@
 module github.com/RameshwariS/gateway
+// module defination file contains dependencies as well and defining own project modules
 
 go 1.24
 

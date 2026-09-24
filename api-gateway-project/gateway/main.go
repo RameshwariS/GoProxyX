@@ -27,7 +27,7 @@ func handler(res http.ResponseWriter, req *http.Request) {
 		//proxy to user service
 		target, _ := url.Parse("http://user-service:3002") // converts string to url object
 
-		proxy := httputil.NewSingleHostReverseProxy(target)
+		proxy := httputil.NewSingleHostReverseProxy(target) 
 
 		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 			fmt.Println("Proxy error:", err)
@@ -41,7 +41,7 @@ func handler(res http.ResponseWriter, req *http.Request) {
 
 	} else if strings.HasPrefix(path, "/products") {
 		//proxy to product service
-		target, _ := url.Parse("http://product-service:3001")
+		target, _ := url.Parse("http://product-service:3001") //breaks the url in structure
 		proxy := httputil.NewSingleHostReverseProxy(target)
 
 		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
@@ -85,6 +85,7 @@ func main() {
 		Addr: redisAddr,
 	})
 
+	// passing the context
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	fmt.Println("context",ctx)
@@ -98,7 +99,8 @@ func main() {
 	//no middleware
 	mux.HandleFunc("/health", health_handler)
 
-	protected := middleware.Logger(
+	protected := 
+	middleware.Logger(
 		middleware.Auth(secret)(
 			middleware.RateLimit(rdb, 10, 2.0)(
 				http.HandlerFunc(handler),
@@ -112,6 +114,11 @@ func main() {
 	srv := &http.Server{
 		Addr:    ":3000",
 		Handler: mux,
+		 ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+
 	}
 
 	go func() {

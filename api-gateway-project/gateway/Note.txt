@@ -18,7 +18,6 @@ Request hits mux → matches /health → goes directly to health_handler
 health_handler writes 200 → done
 Logger never runs. Auth never runs. (It's outside the middleware chain)
 
-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3Nzk5OTA0NzgsImlhdCI6MTc3OTkwNDA3OCwidXNlcl9pZCI6InUxIn0.LivsavdVWRd8sSO2KQdXf8rS8yA4TT9sfqCAr6aGB1I
 
 Satge 4
 we need redis for storing the count 
@@ -60,7 +59,7 @@ Request arrives     │                                     │
   │       │ token   │                                     │
   └───┬───┘         │                                     │
       │             │                                     │
-      │  ✅valid   │         ┌─────────┐                │
+      │  ✅valid    │         ┌─────────┐                │
       ▼             │         │  REDIS  │                │
   ┌──────────┐      │         │         │                │
   │RATELIMIT │─────────────►  │ u1: 7   │                │
@@ -83,3 +82,5 @@ Request arrives     │                                     │
  Problem: Your server handles thousands of requests at the same time. All of them would share that one variable. Request A sets userID = "u1", Request B immediately sets userID = "u2", Request A reads it and gets "u2" — wrong user. Everything breaks.
 
 Context is per request. Each request has its own context, its own data. No mixing.
+
+Ping for startup connectivity check

@@ -12,7 +12,7 @@ services: #containers that we want to run
     networks:
       - gateway_net
     environment:
-      - JWT_SECRET=my_key
+      - JWT_SECRET=${JWT_SECRET}
       - REDIS_ADDR=redis:6379
 
   user-service: #name of the container

@@ -13,7 +13,7 @@ package main
 // // NewProxy takes target host and creates a reverse proxy
 // func NewProxy(targetHost string) (*httputil.ReverseProxy, error) {
 //     url, err := url.Parse(targetHost)
-//     if err != nil {
+// if err != nil {
 //         return nil, err
 //     }
  
