@@ -2,13 +2,10 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -16,130 +13,119 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-type Route struct {
-  Prefix string
-  Proxy  http.Handler
-}
-
-
-func health_handler(res http.ResponseWriter, req *http.Request) {
-	res.WriteHeader(http.StatusOK)
-}
-
-func handler(res http.ResponseWriter, req *http.Request) {
-	path := req.URL.Path
-
-	if strings.HasPrefix(path, "/users") {
-		//proxy to user service
-		target, _ := url.Parse("http://user-service:3002") // converts string to url object
-
-		proxy := httputil.NewSingleHostReverseProxy(target) 
-
-		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-			fmt.Println("Proxy error:", err)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadGateway)
-			fmt.Fprintf(w, `{"error":"service unavailable"}`)
-		}
-
-		proxy.ServeHTTP(res, req)
-		return
-
-	} else if strings.HasPrefix(path, "/products") {
-		//proxy to product service
-		target, _ := url.Parse("http://product-service:3001") //breaks the url in structure
-		proxy := httputil.NewSingleHostReverseProxy(target)
-
-		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-			fmt.Println("Proxy error:", err)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadGateway)
-			fmt.Fprintf(w, `{"error":"service unavailable"}`)
-		}
-
-		proxy.ServeHTTP(res, req)
-		return
-	} else if path == "/health" {
-		res.WriteHeader(http.StatusOK)
-	} else {
-		res.WriteHeader(404)
-		fmt.Fprintf(res, "Not Found")
-	}
-
-}
-
-// The issue: if you wrap handler with middleware, it applies to all routes including /health. But you don't want /health to require a JWT token — health checks should always work.
-// Fix: use a custom mux so you can control which routes get middleware and which don't.
-
 func main() {
-	// http.HandleFunc("/health",health_handler)
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 
-	// will take the input from the request and then check where to send
-	// http.HandleFunc("/",handler)
-
-	secret := os.Getenv("JWT_SECRET")
-	if secret == "" {
-		secret = "my_key" // fallback for local dev
+	// --- configuration -----------------------------------------------------
+	// JWT_SECRET has no fallback: a missing secret now stops the process
+	// instead of silently signing/verifying with a well-known default.
+	secret := mustEnv("JWT_SECRET")
+	if len(secret) < 32 {
+		slog.Error("JWT_SECRET is too short", "min_length", 32)
+		os.Exit(1)
 	}
 
-	redisAddr := os.Getenv("REDIS_ADDR")
-	if redisAddr == "" {
-		redisAddr = "localhost:6379"
+	redisAddr := mustEnv("REDIS_ADDR")
+	userServiceURL := mustEnv("USER_SERVICE_URL")
+	productServiceURL := mustEnv("PRODUCT_SERVICE_URL")
+
+	// --- Redis ---------------------------------------------------------------
+	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
+	defer rdb.Close()
+
+	pingCtx, cancelPing := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancelPing()
+	if err := rdb.Ping(pingCtx).Err(); err != nil {
+		slog.Warn("redis not reachable at startup", "addr", redisAddr, "err", err)
+	} else {
+		slog.Info("redis connected", "addr", redisAddr)
 	}
 
-	rdb := redis.NewClient(&redis.Options{
-		Addr: redisAddr,
+	// --- routing ---------------------------------------------------------------
+	routes := []Route{
+		{Prefix: "/users", Proxy: newProxy(mustURL(userServiceURL))},
+		{Prefix: "/products", Proxy: newProxy(mustURL(productServiceURL))},
+	}
+	router := newRouter(routes)
+
+	rateLimitCfg := middleware.RateLimitConfig{
+		Max:      10,
+		Rate:     2.0,
+		Timeout:  50 * time.Millisecond,
+		FailOpen: true, // preserve availability when Redis is temporarily unreachable.
+	}
+
+	// --- middleware chain --------------------------------------------------
+	// Order matters:
+	//   RequestID -> Logger -> Recover -> Auth -> RateLimit -> router
+	// RequestID and Logger run for every request, including ones later
+	// rejected, so every outcome (200, 401, 429, panic) is still logged.
+	// Recover sits inside Logger so a panic is still timed and logged as a
+	// clean 500. Auth must run before RateLimit, which needs the verified
+	// user ID Auth places in the request context.
+	protected := middleware.RequestID(
+		middleware.Logger(
+			middleware.Recover(
+				middleware.Auth(secret)(
+					middleware.RateLimitWithConfig(rdb, rateLimitCfg)(router),
+				),
+			),
+		),
+	)
+
+	mux := http.NewServeMux()
+
+	// /health is registered outside the protected chain on purpose: a
+	// liveness check must never require a valid JWT, or the gateway could
+	// lock its own monitoring out.
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
 	})
 
-	// passing the context
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	fmt.Println("context",ctx)
-
-	if err := rdb.Ping(ctx).Err(); err != nil {
-		fmt.Println("WARNING: Redis not reachable:", err)
-	} else {
-		fmt.Println("Redis connected:", redisAddr)
-	}
-	mux := http.NewServeMux()
-	//no middleware
-	mux.HandleFunc("/health", health_handler)
-
-protected := middleware.RequestID(middleware.Logger(middleware.Recover(
-  middleware.Auth(secret)(middleware.RateLimit(rdb, cfg)(router)))))
+	// /ready additionally checks the gateway's dependency (Redis), for use
+	// as a Kubernetes readiness probe: a gateway that can't reach Redis
+	// should stop receiving traffic even if the process itself is alive.
+	mux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 500*time.Millisecond)
+		defer cancel()
+		if err := rdb.Ping(ctx).Err(); err != nil {
+			middleware.WriteError(w, http.StatusServiceUnavailable, "not_ready", "redis unavailable")
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
 
 	mux.Handle("/", protected)
 
-	// http.ListenAndServe(":3000", mux)
-	// for graceful shutdown
+	// --- server --------------------------------------------------------------
 	srv := &http.Server{
-		Addr:    ":3000",
-		Handler: mux,
-		 ReadHeaderTimeout: 5 * time.Second,
+		Addr:              ":3000",
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
-
 	}
 
 	go func() {
-		fmt.Println("Gateway running on 3000")
+		slog.Info("gateway starting", "addr", srv.Addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			fmt.Println("Server error", err)
+			slog.Error("server error", "err", err)
+			os.Exit(1)
 		}
 	}()
 
-	// getting signal
+	// --- graceful shutdown ---------------------------------------------------
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	fmt.Println("Shutting down...")
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(),10*time.Second)
+	slog.Info("shutting down")
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
-	
-	if err := srv.Shutdown(shutdownCtx); err != nil{
-		fmt.Println("forced shutdown",err)
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("forced shutdown", "err", err)
 	}
-	fmt.Println("Gateway stopped")
+	slog.Info("gateway stopped")
 }

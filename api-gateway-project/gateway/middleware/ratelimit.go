@@ -61,6 +61,7 @@ var tokenBucket = redis.NewScript(tokenBucketLuaScript)
 type RateLimitConfig struct {
 	Max      int
 	Rate     float64
+	Timeout  time.Duration
 	FailOpen bool
 }
 
@@ -90,7 +91,11 @@ func RateLimitWithConfig(rdb *redis.Client, cfg RateLimitConfig) func(http.Handl
 				return
 			}
 
-			ctx, cancel := context.WithTimeout(r.Context(), 100*time.Millisecond)
+			timeout := cfg.Timeout
+			if timeout <= 0 {
+				timeout = 100 * time.Millisecond
+			}
+			ctx, cancel := context.WithTimeout(r.Context(), timeout)
 			defer cancel()
 
 			result, err := tokenBucket.Run(ctx, rdb, []string{"ratelimit:user:" + uid}, cfg.Max, cfg.Rate, 1).Int64Slice()

@@ -276,15 +276,17 @@ curl -i -H "Authorization: Bearer $TOKEN" http://localhost:3000/users
 
 ## Environment Variables
 
-Passed into the gateway container via `docker-compose.yml`:
+Set these variables in `api-gateway-project/.env` (copy `.env.example` as a starting point). Docker Compose passes them into the gateway container:
 
-| Variable | Default | Description |
+| Variable | Requirement | Description |
 |---|---|---|
-| `JWT_SECRET` | `my_key` | Secret key for signing and verifying JWT tokens |
-| `REDIS_ADDR` | `redis:6379` | Redis address — uses Docker service name, not localhost |
+| `JWT_SECRET` | Required | Secret key for signing and verifying JWT tokens; use at least 32 characters |
+| `REDIS_ADDR` | Required | Redis address, such as `redis:6379` inside Docker |
+| `USER_SERVICE_URL` | Required | User service URL, such as `http://user-service:3002` inside Docker |
+| `PRODUCT_SERVICE_URL` | Required | Product service URL, such as `http://product-service:3001` inside Docker |
 
 > **Never commit real secrets to git.**
-> In production replace `my_key` with a long random string.
+> Generate a secret with `openssl rand -hex 32` and use the same value when generating JWT tokens.
 
 ---
 

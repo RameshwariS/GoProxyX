@@ -12,8 +12,10 @@ services: #containers that we want to run
     networks:
       - gateway_net
     environment:
-      - JWT_SECRET=${JWT_SECRET}
-      - REDIS_ADDR=redis:6379
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      REDIS_ADDR: ${REDIS_ADDR:?set REDIS_ADDR in .env}
+      USER_SERVICE_URL: ${USER_SERVICE_URL:?set USER_SERVICE_URL in .env}
+      PRODUCT_SERVICE_URL: ${PRODUCT_SERVICE_URL:?set PRODUCT_SERVICE_URL in .env}
 
   user-service: #name of the container
     build: ./user-service #path to the Dockerfile
@@ -37,5 +39,5 @@ services: #containers that we want to run
 
 networks:
   gateway_net:            # Defines a custom network
-    driver: bridge  
-  
+    driver: bridge
+
