@@ -8,28 +8,28 @@ import (
 	"strings"
 )
 
-type Product struct{
+type Item struct{
 	Id int `json:"id"`
 	Name string `json:"name"`
 
 }
 
-func getProduct(res http.ResponseWriter,req *http.Request){
-	products := []Product{
+func getItem(res http.ResponseWriter,req *http.Request){
+	items := []Item{
 		{Id: 1,Name: "Phone"},
 		{Id: 2,Name:"Laptop"},
 	}
 	path := req.URL.Path
-	if path == "/products"{
-		json.NewEncoder(res).Encode(products)
+	if path == "/items"{
+		json.NewEncoder(res).Encode(items)
 	}else{
-		id,err := strconv.Atoi(strings.TrimPrefix(path,"/products/"))
+		id,err := strconv.Atoi(strings.TrimPrefix(path,"/items/"))
 		if err != nil {
 			// fmt.Println(id)
 			res.WriteHeader(400)
 			return
 		}
-		for _,p := range products {
+		for _,p := range items {
 			if p.Id ==  id {
 				json.NewEncoder(res).Encode(p)
 				return
@@ -44,7 +44,7 @@ func getProduct(res http.ResponseWriter,req *http.Request){
 
 func main(){
 
-	http.HandleFunc("/products",getProduct)
-	http.HandleFunc("/products/",getProduct)
+	http.HandleFunc("/items",getItem)
+	http.HandleFunc("/items/",getItem)
 	http.ListenAndServe(":3001",nil)
 }

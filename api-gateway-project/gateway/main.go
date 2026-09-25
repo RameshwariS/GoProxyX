@@ -27,7 +27,7 @@ func main() {
 
 	redisAddr := mustEnv("REDIS_ADDR")
 	userServiceURL := mustEnv("USER_SERVICE_URL")
-	productServiceURL := mustEnv("PRODUCT_SERVICE_URL")
+	itemServiceURL := mustEnv("ITEM_SERVICE_URL")
 
 	// --- Redis ---------------------------------------------------------------
 	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
@@ -44,7 +44,7 @@ func main() {
 	// --- routing ---------------------------------------------------------------
 	routes := []Route{
 		{Prefix: "/users", Proxy: newProxy(mustURL(userServiceURL))},
-		{Prefix: "/products", Proxy: newProxy(mustURL(productServiceURL))},
+		{Prefix: "/items", Proxy: newProxy(mustURL(itemServiceURL))},
 	}
 	router := newRouter(routes)
 

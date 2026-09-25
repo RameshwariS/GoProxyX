@@ -2,7 +2,7 @@
 
 > Go · Redis · Docker · JWT
 
-A production-style API Gateway built in Go. Acts as the single entry point for all client requests. Instead of clients calling `user-service` or `product-service` directly, every request passes through the gateway first.
+A production-style API Gateway built in Go. Acts as the single entry point for all client requests. Instead of clients calling `user-service` or `item-service` directly, every request passes through the gateway first.
 
 ---
 
@@ -38,7 +38,7 @@ RateLimit   ← checks token bucket in Redis
    ▼
 Handler     ← picks service based on URL path
    ├── /users/*     → http://user-service:3002
-   └── /products/*  → http://product-service:3001
+   └── /items/*  → http://item-service:3001
    │
    ▼
 Response travels back through Logger → logged with status + latency
@@ -64,8 +64,8 @@ api-gateway-project/
 ├── user-service/
 │   ├── main.go                    GET /users  and  GET /users/{id}
 │   └── Dockerfile
-├── product-service/
-│   ├── main.go                    GET /products  and  GET /products/{id}
+├── item-service/
+│   ├── main.go                    GET /items  and  GET /items/{id}
 │   └── Dockerfile
 ├── docker-compose.yml             runs all 4 containers together
 └── config/
@@ -105,7 +105,7 @@ You should see:
 gateway          | Redis connected: redis:6379
 gateway          | Gateway running on :3000
 user-service     | listening on :3002
-product-service  | listening on :3001
+item-service  | listening on :3001
 ```
 
 > The gateway runs at `http://localhost:3000`
@@ -179,7 +179,7 @@ Response:
 
 ### Get All Products
 ```bash
-curl -H "Authorization: Bearer $TOKEN" http://localhost:3000/products
+curl -H "Authorization: Bearer $TOKEN" http://localhost:3000/items
 ```
 Response:
 ```json
@@ -193,7 +193,7 @@ Response:
 
 ### Get a Specific Product
 ```bash
-curl -H "Authorization: Bearer $TOKEN" http://localhost:3000/products/2
+curl -H "Authorization: Bearer $TOKEN" http://localhost:3000/items/2
 ```
 Response:
 ```json
@@ -283,7 +283,7 @@ Set these variables in `api-gateway-project/.env` (copy `.env.example` as a star
 | `JWT_SECRET` | Required | Secret key for signing and verifying JWT tokens; use at least 32 characters |
 | `REDIS_ADDR` | Required | Redis address, such as `redis:6379` inside Docker |
 | `USER_SERVICE_URL` | Required | User service URL, such as `http://user-service:3002` inside Docker |
-| `PRODUCT_SERVICE_URL` | Required | Product service URL, such as `http://product-service:3001` inside Docker |
+| `ITEM_SERVICE_URL` | Required | Product service URL, such as `http://item-service:3001` inside Docker |
 
 > **Never commit real secrets to git.**
 > Generate a secret with `openssl rand -hex 32` and use the same value when generating JWT tokens.
@@ -326,8 +326,8 @@ DEL ratelimit:user:u1
 |---|---|---|
 | `401` | Missing or invalid JWT token | Generate a token with the gentoken tool |
 | `429` | Rate limit exceeded | Wait for bucket to refill — check `Retry-After` header |
-| `404` | URL path has no matching route | Only `/users`, `/products`, `/health` are valid |
-| `502` | Backend service is down | Check if user-service or product-service container is running |
+| `404` | URL path has no matching route | Only `/users`, `/items`, `/health` are valid |
+| `502` | Backend service is down | Check if user-service or item-service container is running |
 
 ---
 

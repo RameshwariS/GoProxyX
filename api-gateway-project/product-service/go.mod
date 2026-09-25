@@ -1,3 +1,3 @@
-module github.com/RameshwariS/product-service
+module github.com/RameshwariS/item-service
 
 go 1.20

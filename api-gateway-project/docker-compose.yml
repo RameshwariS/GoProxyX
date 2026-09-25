@@ -7,7 +7,7 @@ services: #containers that we want to run
       - "3000:3000" #maps port 3000 of the container to port 3000 of the host machine
     depends_on:
       - user-service #gateway depends on user-service
-      - product-service #gateway depends on product-service
+      - item-service #gateway depends on ITEM-service
       - redis
     networks:
       - gateway_net
@@ -15,7 +15,7 @@ services: #containers that we want to run
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
       REDIS_ADDR: ${REDIS_ADDR:?set REDIS_ADDR in .env}
       USER_SERVICE_URL: ${USER_SERVICE_URL:?set USER_SERVICE_URL in .env}
-      PRODUCT_SERVICE_URL: ${PRODUCT_SERVICE_URL:?set PRODUCT_SERVICE_URL in .env}
+      ITEM_SERVICE_URL: ${ITEM_SERVICE_URL:?set ITEM_SERVICE_URL in .env}
 
   user-service: #name of the container
     build: ./user-service #path to the Dockerfile
@@ -24,8 +24,8 @@ services: #containers that we want to run
     networks:
       - gateway_net
 
-  product-service: #name of the container
-    build: ./product-service #path to the Dockerfile
+  item-service: #name of the container
+    build: ./item-service #path to the Dockerfile
     ports:
       - "3001:3001" #maps port 3001 of the container to port 3001 of the host machine
     networks:
