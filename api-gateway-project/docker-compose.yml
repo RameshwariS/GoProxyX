@@ -36,7 +36,22 @@ services: #containers that we want to run
       - "6379:6379" #maps port 6379 of the container to port 6379 of the host machine
     networks:
       - gateway_net
-
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+    ports:
+      - "5432:5432" #maps port 5432 of the container to port 5432 of the host machine
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - gateway_net
+  
+volumes:
+  postgres_data:
+  
 networks:
   gateway_net:            # Defines a custom network
     driver: bridge

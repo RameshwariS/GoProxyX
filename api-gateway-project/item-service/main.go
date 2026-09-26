@@ -14,7 +14,7 @@ type Item struct{
 
 }
 
-func getItem(res http.ResponseWriter,req *http.Request){
+func getItems(res http.ResponseWriter,req *http.Request){
 	items := []Item{
 		{Id: 1,Name: "Phone"},
 		{Id: 2,Name:"Laptop"},
@@ -42,9 +42,33 @@ func getItem(res http.ResponseWriter,req *http.Request){
 	// json.NewEncoder(res).Encode(products)
 }
 
+func getItem(res http.ResponseWriter,req *http.Request){
+	path := req.URL.Path
+	if path == "/items"{
+		json.NewEncoder(res).Encode(items)
+	}else{
+		id,err := strconv.Atoi(strings.TrimPrefix(path,"/items/"))
+		if err != nil {
+			// fmt.Println(id)
+			res.WriteHeader(400)
+			return
+		}
+		for _,p := range items {
+			if p.Id ==  id {
+				json.NewEncoder(res).Encode(p)
+				return
+			}
+		}
+		http.NotFound(res,req)
+
+	}
+
+}
+
 func main(){
 
-	http.HandleFunc("/items",getItem)
-	http.HandleFunc("/items/",getItem)
+	http.HandleFunc("/items",getItems)
+	http.HandleFunc("/items/",getItems)
+	http.HandleFunc("/items/{id}",getItem)
 	http.ListenAndServe(":3001",nil)
 }
