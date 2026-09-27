@@ -111,6 +111,20 @@ item-service  | listening on :3001
 > The gateway runs at `http://localhost:3000`
 > All requests must go through the gateway — never call services directly.
 
+### Initialize and seed the item database
+
+The item service stores items in PostgreSQL. Start the database container, then apply the schema migration and seed sample users and items from the `api-gateway-project` directory:
+
+```bash
+docker compose up -d postgres
+docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < item-service/migrations/001_init.up.sql
+docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < item-service/seed.sql
+```
+
+Apply the migration once to create the tables. The seed file can be run again safely; it skips sample users and items that are already present. `-T` keeps `docker compose exec` from allocating a terminal so SQL can be read from the file on standard input.
+
+If PostgreSQL fails to start because host port `5432` is already in use, change the `postgres` service port mapping in `docker-compose.yml` from `5432:5432` to `5433:5432`, then retry. Containers continue to reach PostgreSQL on port `5432`; host tools can use port `5433`.
+
 ---
 
 ## Generate a Test Token
