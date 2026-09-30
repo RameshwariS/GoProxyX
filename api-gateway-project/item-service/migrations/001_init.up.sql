@@ -1,10 +1,12 @@
-CREATE TABLE users (
+-- Safe to run on every container start: every statement is idempotent, so
+-- redeploying or restarting never fails with "relation already exists".
+CREATE TABLE IF NOT EXISTS users (
   id         BIGSERIAL PRIMARY KEY,
   name       TEXT NOT NULL,
   email      TEXT NOT NULL UNIQUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE TABLE items (
+CREATE TABLE IF NOT EXISTS items (
   id          BIGSERIAL PRIMARY KEY,
   seller_id   BIGINT NOT NULL REFERENCES users(id),
   title       TEXT NOT NULL,
@@ -16,15 +18,15 @@ CREATE TABLE items (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   sold_at     TIMESTAMPTZ
 );
- 
-CREATE TABLE orders (
+
+CREATE TABLE IF NOT EXISTS orders (
   id         BIGSERIAL PRIMARY KEY,
   item_id    BIGINT NOT NULL UNIQUE REFERENCES items(id),  -- one order per item
   buyer_id   BIGINT NOT NULL REFERENCES users(id),
   price_jpy  INTEGER NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
- 
+
 -- supports "newest on_sale items" with keyset pagination
-CREATE INDEX idx_items_status_created ON items (status, created_at DESC, id DESC);
-CREATE INDEX idx_items_seller ON items (seller_id);
+CREATE INDEX IF NOT EXISTS idx_items_status_created ON items (status, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_items_seller ON items (seller_id);

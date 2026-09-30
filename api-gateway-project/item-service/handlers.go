@@ -1,7 +1,6 @@
 package main
  
 import (
-  "database/sql"
   "encoding/json"
   "errors"
   "net/http"
@@ -28,6 +27,11 @@ func callerID(r *http.Request) (int64, bool) {
   return id, err == nil
 }
  
+type listItemsResponse struct {
+  Items      []Item  `json:"items"`
+  NextCursor *string `json:"next_cursor"`
+}
+
 func (h *Handlers) ListItems(w http.ResponseWriter, r *http.Request) {
   q := r.URL.Query().Get("q")
   limit := 20
@@ -36,7 +40,14 @@ func (h *Handlers) ListItems(w http.ResponseWriter, r *http.Request) {
       limit = n
     }
   }
-  items, err := h.store.ListItems(r.Context(), q, limit, sql.NullTime{}, sql.NullInt64{})
+
+  afterCreated, afterID, err := decodeCursor(r.URL.Query().Get("after"))
+  if err != nil {
+    writeError(w, http.StatusBadRequest, "invalid_cursor", "the 'after' cursor is malformed; omit it to start from the first page")
+    return
+  }
+
+  items, err := h.store.ListItems(r.Context(), q, limit, afterCreated, afterID)
   if err != nil {
     writeError(w, http.StatusInternalServerError, "internal_error", "could not list items")
     return
@@ -44,7 +55,19 @@ func (h *Handlers) ListItems(w http.ResponseWriter, r *http.Request) {
   if items == nil {
     items = []Item{}
   }
-  json.NewEncoder(w).Encode(items)
+
+  res := listItemsResponse{Items: items}
+  // A full page might not be the last page -- there could be more items
+  // after it, or the next page could turn out empty. Only a short page
+  // (fewer rows than asked for) proves there is nothing further, so that
+  // is the only case where next_cursor is correctly left nil; otherwise
+  // hand back a cursor for the last row and let the next request find out.
+  if len(items) == limit {
+    last := items[len(items)-1]
+    cursor := encodeCursor(last.CreatedAt, last.ID)
+    res.NextCursor = &cursor
+  }
+  json.NewEncoder(w).Encode(res)
 }
  
 func (h *Handlers) GetItem(w http.ResponseWriter, r *http.Request, id int64) {

@@ -3,9 +3,12 @@ package middleware
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -65,6 +68,53 @@ type RateLimitConfig struct {
 	FailOpen bool
 }
 
+// bucketResult is what one token-bucket check produces, regardless of
+// whether the bucket is keyed by user id or by IP address.
+type bucketResult struct {
+	Allowed    bool
+	Remaining  int64
+	RetryAfter int64
+}
+
+// checkBucket runs the shared Lua script against one Redis key. Both
+// RateLimitWithConfig (keyed by user) and RateLimitByIP (keyed by client
+// address) call this, so the atomicity guarantee and the Redis-failure
+// handling only need to be reasoned about once.
+func checkBucket(r *http.Request, rdb *redis.Client, cfg RateLimitConfig, key string) (bucketResult, error) {
+	if rdb == nil || cfg.Max <= 0 || cfg.Rate <= 0 {
+		return bucketResult{}, fmt.Errorf("invalid rate limiter configuration: max=%d rate=%v", cfg.Max, cfg.Rate)
+	}
+
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = 100 * time.Millisecond
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
+
+	result, err := tokenBucket.Run(ctx, rdb, []string{key}, cfg.Max, cfg.Rate, 1).Int64Slice()
+	if err != nil {
+		return bucketResult{}, err
+	}
+	if len(result) != 3 {
+		return bucketResult{}, errors.New("unexpected result from rate limiter")
+	}
+	return bucketResult{Allowed: result[0] == 1, Remaining: result[1], RetryAfter: result[2]}, nil
+}
+
+// respondFromBucket writes the standard rate-limit headers and, if the
+// bucket is empty, the 429 response. It returns whether the caller should
+// stop (true) or continue to the next handler (false).
+func respondFromBucket(w http.ResponseWriter, cfg RateLimitConfig, res bucketResult) (stop bool) {
+	w.Header().Set("X-RateLimit-Limit", strconv.Itoa(cfg.Max))
+	w.Header().Set("X-RateLimit-Remaining", strconv.FormatInt(res.Remaining, 10))
+	if !res.Allowed {
+		w.Header().Set("Retry-After", strconv.FormatInt(res.RetryAfter, 10))
+		return true
+	}
+	return false
+}
+
 // RateLimit preserves the original API and allows requests through if Redis
 // is unavailable, matching the middleware's previous behavior.
 func RateLimit(rdb *redis.Client, maxTokens int, refillRate float64) func(http.Handler) http.Handler {
@@ -75,7 +125,10 @@ func RateLimit(rdb *redis.Client, maxTokens int, refillRate float64) func(http.H
 	})
 }
 
-// RateLimitWithConfig creates a per-user token bucket middleware.
+// RateLimitWithConfig creates a per-user token bucket middleware. It must
+// run after Auth: it reads the verified user id from the request context,
+// so it cannot protect routes nobody has logged into yet (see
+// RateLimitByIP for those).
 func RateLimitWithConfig(rdb *redis.Client, cfg RateLimitConfig) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -85,24 +138,8 @@ func RateLimitWithConfig(rdb *redis.Client, cfg RateLimitConfig) func(http.Handl
 				return
 			}
 
-			if rdb == nil || cfg.Max <= 0 || cfg.Rate <= 0 {
-				slog.Error("invalid rate limiter configuration", "max", cfg.Max, "rate", cfg.Rate)
-				WriteError(w, http.StatusServiceUnavailable, "rate_limiter_unavailable", "try again shortly")
-				return
-			}
-
-			timeout := cfg.Timeout
-			if timeout <= 0 {
-				timeout = 100 * time.Millisecond
-			}
-			ctx, cancel := context.WithTimeout(r.Context(), timeout)
-			defer cancel()
-
-			result, err := tokenBucket.Run(ctx, rdb, []string{"ratelimit:user:" + uid}, cfg.Max, cfg.Rate, 1).Int64Slice()
-			if err != nil || len(result) != 3 {
-				if err == nil {
-					err = errors.New("unexpected result from rate limiter")
-				}
+			res, err := checkBucket(r, rdb, cfg, "ratelimit:user:"+uid)
+			if err != nil {
 				slog.Error("rate limiter backend error", "err", err, "fail_open", cfg.FailOpen)
 				if cfg.FailOpen {
 					next.ServeHTTP(w, r)
@@ -112,15 +149,64 @@ func RateLimitWithConfig(rdb *redis.Client, cfg RateLimitConfig) func(http.Handl
 				return
 			}
 
-			allowed, remaining, retryAfter := result[0], result[1], result[2]
-			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(cfg.Max))
-			w.Header().Set("X-RateLimit-Remaining", strconv.FormatInt(remaining, 10))
-			if allowed == 0 {
-				w.Header().Set("Retry-After", strconv.FormatInt(retryAfter, 10))
+			if respondFromBucket(w, cfg, res) {
 				WriteError(w, http.StatusTooManyRequests, "rate_limited", "too many requests")
 				return
 			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
 
+// clientIP extracts the caller's address for rate-limiting purposes. On
+// Render (and behind most load balancers) the real client address arrives
+// in X-Forwarded-For, with r.RemoteAddr instead holding the load balancer's
+// own address -- keying on RemoteAddr there would put every visitor in one
+// shared bucket. X-Forwarded-For can be a comma-separated chain if the
+// request passed through several proxies; the first entry is the original
+// client. This header is attacker-controlled on a request that reaches the
+// gateway directly, but nothing here is reachable except through Render's
+// own proxy, which sets it itself.
+func clientIP(r *http.Request) string {
+	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+		if ip, _, ok := strings.Cut(fwd, ","); ok {
+			return strings.TrimSpace(ip)
+		}
+		return strings.TrimSpace(fwd)
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+// RateLimitByIP protects routes that run before authentication exists yet
+// -- chiefly POST /auth/login, which mints a JWT for anyone who calls it
+// and so has no user id to key RateLimitWithConfig on. Without this,
+// RateLimitWithConfig's protection is easy to route around entirely: mint
+// unlimited tokens from /auth/login, one per request, and there is no
+// per-user bucket to ever fill up. Fails open on a Redis error, the same
+// policy as RateLimitWithConfig, so a Redis outage degrades to "login is
+// temporarily unprotected" rather than "nobody can log in."
+func RateLimitByIP(rdb *redis.Client, cfg RateLimitConfig) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			res, err := checkBucket(r, rdb, cfg, "ratelimit:ip:"+clientIP(r))
+			if err != nil {
+				slog.Error("rate limiter backend error", "err", err, "fail_open", cfg.FailOpen)
+				if cfg.FailOpen {
+					next.ServeHTTP(w, r)
+					return
+				}
+				WriteError(w, http.StatusServiceUnavailable, "rate_limiter_unavailable", "try again shortly")
+				return
+			}
+
+			if respondFromBucket(w, cfg, res) {
+				WriteError(w, http.StatusTooManyRequests, "rate_limited", "too many requests -- slow down")
+				return
+			}
 			next.ServeHTTP(w, r)
 		})
 	}

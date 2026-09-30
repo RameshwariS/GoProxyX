@@ -1,13 +1,16 @@
-version : '3.8' # defines the version of docker-compose
+# Local development stack: docker compose up --build
+#   frontend  http://localhost:8080   (the storefront)
+#   gateway   http://localhost:3000   (the API the storefront talks to)
+# Copy .env.example to .env first. Render deployment uses ../render.yaml instead.
 
-services: #containers that we want to run
-  gateway: #name of the container
-    build: ./gateway #path to the Dockerfile
+services:
+  gateway:
+    build: ./gateway
     ports:
-      - "3000:3000" #maps port 3000 of the container to port 3000 of the host machine
+      - "3000:3000"
     depends_on:
-      - user-service #gateway depends on user-service
-      - item-service #gateway depends on ITEM-service
+      - user-service
+      - item-service
       - redis
     networks:
       - gateway_net
@@ -16,43 +19,59 @@ services: #containers that we want to run
       REDIS_ADDR: ${REDIS_ADDR:?set REDIS_ADDR in .env}
       USER_SERVICE_URL: ${USER_SERVICE_URL:?set USER_SERVICE_URL in .env}
       ITEM_SERVICE_URL: ${ITEM_SERVICE_URL:?set ITEM_SERVICE_URL in .env}
+      GATEWAY_SECRET: ${GATEWAY_SECRET:?set GATEWAY_SECRET in .env}
 
-  user-service: #name of the container
-    build: ./user-service #path to the Dockerfile
-    ports:
-      - "3002:3002" #maps port 3002 of the container to port 3002 of the host machine
+  user-service:
+    build: ./user-service
+    # No published ports: reachable only through the gateway, on gateway_net.
+    environment:
+      GATEWAY_SECRET: ${GATEWAY_SECRET:?set GATEWAY_SECRET in .env}
     networks:
       - gateway_net
 
-  item-service: #name of the container
-    build: ./item-service #path to the Dockerfile
-    ports:
-      - "3001:3001" #maps port 3001 of the container to port 3001 of the host machine
+  item-service:
+    build: ./item-service
+    # No published ports: reachable only through the gateway, on gateway_net.
+    # entrypoint.sh applies migrations + seed data before the server starts.
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      GATEWAY_SECRET: ${GATEWAY_SECRET:?set GATEWAY_SECRET in .env}
+    depends_on:
+      - postgres
     networks:
       - gateway_net
+
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379" #maps port 6379 of the container to port 6379 of the host machine
     networks:
       - gateway_net
+
   postgres:
     image: postgres:15-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
-    ports:
-      - "5432:5432" #maps port 5432 of the container to port 5432 of the host machine
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - gateway_net
-  
+
+  # Static storefront served by nginx on http://localhost:8080. config.js is
+  # written at container start from API_BASE_URL, the address your BROWSER
+  # uses to reach the gateway (so localhost, not a Docker-internal name).
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    environment:
+      API_BASE_URL: http://localhost:3000
+    depends_on:
+      - gateway
+
 volumes:
   postgres_data:
-  
-networks:
-  gateway_net:            # Defines a custom network
-    driver: bridge
 
+networks:
+  gateway_net:
+    driver: bridge

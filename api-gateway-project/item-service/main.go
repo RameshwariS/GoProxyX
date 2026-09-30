@@ -81,9 +81,15 @@ func main() {
     }
   })
  
+  // PORT is injected by Render (web services must bind it); default 3001
+  // matches docker-compose.yml for local development.
+  port := os.Getenv("PORT")
+  if port == "" {
+    port = "3001"
+  }
   srv := &http.Server{
-    Addr:              ":3001",
-    Handler:           mux,
+    Addr:              ":" + port,
+    Handler:           requireGatewaySecret(mux),
     ReadHeaderTimeout: 5 * time.Second,
   }
   slog.Info("item-service starting", "addr", srv.Addr)

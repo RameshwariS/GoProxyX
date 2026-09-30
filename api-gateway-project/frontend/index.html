@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GoProxyX Market</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏷️</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="wrap topbar__inner">
+      <div class="brand">
+        <span class="brand__mark" aria-hidden="true">🏷️</span>
+        <span class="brand__name">GoProxyX <em>Market</em></span>
+      </div>
+
+      <div id="gauge" class="gauge" hidden title="Requests remaining before the gateway's rate limiter steps in">
+        <span class="gauge__label">requests left</span>
+        <div class="gauge__track"><div id="gaugeFill" class="gauge__fill"></div></div>
+        <span id="gaugeValue" class="gauge__value">--</span>
+      </div>
+
+      <div id="whoami" class="whoami" hidden>
+        <span id="whoamiName"></span>
+        <button id="logoutBtn" class="btn btn--ghost btn--small" type="button">Log out</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+
+    <!-- Logged-out gate -->
+    <section id="loginGate" class="card card--flat login-gate">
+      <h1>Step up to the counter</h1>
+      <p class="muted">This is a demo storefront in front of the GoProxyX API gateway. Pick a seller to shop and list items as &mdash; there's no password, just a signed token, minted by the gateway's own <code>/auth/login</code> endpoint.</p>
+      <div id="demoUsers" class="demo-users" aria-live="polite">
+        <p class="muted">Loading sellers&hellip;</p>
+      </div>
+    </section>
+
+    <!-- Logged-in app -->
+    <div id="app" hidden>
+
+      <section class="card card--flat new-item">
+        <button id="newItemToggle" class="new-item__toggle" type="button" aria-expanded="false">
+          <span class="plus" aria-hidden="true">+</span> List a new item
+        </button>
+        <form id="newItemForm" class="new-item__form" hidden>
+          <div class="field">
+            <label for="title">Title</label>
+            <input id="title" name="title" type="text" maxlength="120" required placeholder="e.g. Rice cooker, barely used">
+          </div>
+          <div class="field">
+            <label for="description">Description</label>
+            <textarea id="description" name="description" rows="2" maxlength="500" placeholder="Condition, why you're selling, anything a buyer should know"></textarea>
+          </div>
+          <div class="field field--price">
+            <label for="price">Price</label>
+            <div class="price-input">
+              <span>¥</span>
+              <input id="price" name="price" type="number" min="1" step="1" required placeholder="1500">
+            </div>
+          </div>
+          <div class="new-item__actions">
+            <button type="submit" class="btn btn--primary">List item</button>
+            <span id="newItemStatus" class="form-status" role="status"></span>
+          </div>
+        </form>
+      </section>
+
+      <section class="listing">
+        <div class="listing__head">
+          <h2>On the table</h2>
+          <label class="search">
+            <span class="sr-only">Search items</span>
+            <input id="search" type="search" placeholder="Search titles&hellip;">
+          </label>
+        </div>
+
+        <div id="notice" class="notice" role="status" hidden></div>
+        <div id="itemsStatus" class="items-status" role="status"></div>
+        <div id="itemGrid" class="item-grid"></div>
+      </section>
+
+    </div>
+  </main>
+
+  <footer class="wrap sitefoot">
+    <p>A demo storefront for <a href="https://github.com/RameshwariS/GoProxyX" target="_blank" rel="noopener">GoProxyX</a> &mdash; a Go API gateway with JWT auth, Redis-backed rate limiting, and a Postgres-backed marketplace service behind it.</p>
+  </footer>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

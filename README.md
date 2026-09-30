@@ -6,6 +6,24 @@ A production-style API Gateway built in Go. Acts as the single entry point for a
 
 ---
 
+## Live storefront & deployment
+
+The gateway now ships with a small storefront (`api-gateway-project/frontend/`, plain HTML/CSS/JS, no build step) so the whole system can be used from a browser — pick a demo seller, list items, buy them, and watch the header gauge count down the gateway's rate limit in real time.
+
+| Endpoint | Auth | Purpose |
+|---|---|---|
+| `POST /auth/login` | none | Demo sign-in: returns a signed JWT for a `user_id` |
+| `GET /auth/demo-users` | none | Lists the seeded demo sellers |
+| `GET /health`, `GET /ready` | none | Liveness / readiness (Redis) |
+| `/items/*`, `/users/*` | JWT | Proxied to `item-service` / `user-service` |
+
+- **Deploy to Render** (free tier, one Blueprint): see [RENDER_DEPLOY.md](RENDER_DEPLOY.md).
+- **Run locally**: `cd api-gateway-project && cp .env.example .env && docker compose up --build`, then open <http://localhost:8080>.
+
+The gateway forwards the *verified* JWT identity to backends as `X-User-ID` (any client-supplied value is discarded) and proves it was the caller with a shared `X-Gateway-Secret`, which backends require — so they cannot be called around the gateway even when they have public URLs.
+
+---
+
 ## What It Does
 
 Every request passes through four layers before reaching any service:
@@ -133,7 +151,7 @@ Every request (except `/health`) requires a JWT token.
 
 ```bash
 cd gateway
-go run cmd/gentoken/main.go --user=u1 --secret=my_key
+JWT_SECRET=<the same value as JWT_SECRET in your .env> go run cmd/gentoken/main.go --user=u1
 ```
 
 Copy the printed token. Use it in your requests.
@@ -141,15 +159,17 @@ Copy the printed token. Use it in your requests.
 | Flag | Default | Description |
 |---|---|---|
 | `--user` | *(required)* | User ID to embed in the token |
-| `--secret` | `my_key` | Must match `JWT_SECRET` in docker-compose.yml |
+| `--secret` | *(none — reads `$JWT_SECRET`)* | Must match `JWT_SECRET` in your `.env` |
 | `--expires` | `24h` | How long the token is valid |
 
 Generate tokens for different users:
 
 ```bash
-go run cmd/gentoken/main.go --user=alice --secret=my_key
-go run cmd/gentoken/main.go --user=bob   --secret=my_key
+JWT_SECRET=<your secret> go run cmd/gentoken/main.go --user=alice
+JWT_SECRET=<your secret> go run cmd/gentoken/main.go --user=bob
 ```
+
+Or pass it explicitly instead of via the environment: `--secret=<your secret>`.
 
 ---
 
@@ -232,7 +252,7 @@ curl -i -H "Authorization: Bearer faketoken" http://localhost:3000/users
 
 **Test 3 — Valid token (expect 200)**
 ```bash
-TOKEN=$(go run cmd/gentoken/main.go --user=u1 --secret=my_key)
+TOKEN=$(JWT_SECRET=<your secret> go run cmd/gentoken/main.go --user=u1)
 curl -i -H "Authorization: Bearer $TOKEN" http://localhost:3000/users
 # → 200 OK
 ```

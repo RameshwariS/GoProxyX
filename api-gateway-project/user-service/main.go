@@ -3,6 +3,7 @@ package main
 import (
 	// "fmt"
 	"net/http"
+	"os"
 	"encoding/json"
 	"strconv"
 	"strings"
@@ -43,8 +44,19 @@ func user_func(res http.ResponseWriter,req *http.Request){
 }
 
 func main(){
-	http.HandleFunc("/user",user_func)
-	http.HandleFunc("/users",user_func)
-	http.HandleFunc("/users/",user_func)
-	http.ListenAndServe(":3002",nil)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("/user",user_func)
+	mux.HandleFunc("/users",user_func)
+	mux.HandleFunc("/users/",user_func)
+
+	// PORT is injected by Render (web services must bind it); default 3002
+	// matches docker-compose.yml for local development.
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "3002"
+	}
+	http.ListenAndServe(":"+port, requireGatewaySecret(mux))
 }

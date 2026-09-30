@@ -21,9 +21,9 @@ func UserIDFrom(ctx context.Context) (string, bool) {
 //getting the token
 
 func bearerToken(r *http.Request) (string, bool) {
-	_, tok, found := strings.Cut(r.Header.Get("Authorization"), " ")
+	scheme, tok, found := strings.Cut(r.Header.Get("Authorization"), " ")
 
-	if !found || tok == "" {
+	if !found || !strings.EqualFold(scheme, "Bearer") || tok == "" {
 		return "", false
 	}
 	return tok, true

@@ -1,0 +1,126 @@
+# GoProxyX on Render -- one Blueprint for the whole stack.
+#
+#   frontend (static)  --->  gateway (web)  --->  item-service (web)  --->  Postgres
+#                                 |          \-->  user-service (web)
+#                                 \-------------->  Key Value (Redis)
+#
+# Everything here uses Render's FREE instance types. Two consequences worth
+# knowing (both explained in RENDER_DEPLOY.md):
+#   * Render's free plan has no private services, so item-service and
+#     user-service are ordinary web services with public URLs. They are
+#     protected by GATEWAY_SECRET: the gateway sends it on every request and
+#     the backends reject anything without it.
+#   * Free web services sleep after ~15 minutes idle (first request afterwards
+#     takes up to a minute), and free Postgres expires after 30 days.
+#
+# Naming table -- these names are referenced from several places below. If
+# you rename one, update every reference:
+#   goproxyx-db, goproxyx-redis, goproxyx-item-service,
+#   goproxyx-user-service, goproxyx-gateway, goproxyx-frontend, goproxyx-shared
+
+databases:
+  - name: goproxyx-db
+    databaseName: items
+    user: goproxyx
+    plan: free
+    region: oregon
+    ipAllowList: []   # internal connections only
+
+envVarGroups:
+  # Values that more than one service needs. generateValue creates a random
+  # secret once, on first sync, and reuses it afterwards.
+  - name: goproxyx-shared
+    envVars:
+      - key: GATEWAY_SECRET
+        generateValue: true
+
+services:
+  # ---------- Redis-compatible store for the rate limiter ----------
+  - type: keyvalue
+    name: goproxyx-redis
+    plan: free
+    region: oregon
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []   # internal connections only
+
+  # ---------- item-service: Postgres-backed marketplace API ----------
+  - type: web
+    name: goproxyx-item-service
+    runtime: docker
+    plan: free
+    region: oregon
+    rootDir: api-gateway-project/item-service
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - fromGroup: goproxyx-shared
+      - key: DATABASE_URL
+        fromDatabase:
+          name: goproxyx-db
+          property: connectionString
+
+  # ---------- user-service: small demo users API ----------
+  - type: web
+    name: goproxyx-user-service
+    runtime: docker
+    plan: free
+    region: oregon
+    rootDir: api-gateway-project/user-service
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - fromGroup: goproxyx-shared
+
+  # ---------- gateway: the only thing the browser talks to ----------
+  - type: web
+    name: goproxyx-gateway
+    runtime: docker
+    plan: free
+    region: oregon
+    rootDir: api-gateway-project/gateway
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - fromGroup: goproxyx-shared
+      - key: JWT_SECRET
+        generateValue: true
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: goproxyx-redis
+          property: connectionString
+      # Each backend's `host` is its Render service slug; the gateway turns
+      # it into https://<slug>.onrender.com (see serviceURL in router.go).
+      # This stays correct even if Render had to add a suffix to a service
+      # name because it was already taken.
+      - key: ITEM_SERVICE_HOST
+        fromService:
+          type: web
+          name: goproxyx-item-service
+          property: host
+      - key: USER_SERVICE_HOST
+        fromService:
+          type: web
+          name: goproxyx-user-service
+          property: host
+
+  # ---------- frontend: static site ----------
+  # Paths here are relative to the repository root (no rootDir), which keeps
+  # buildCommand and staticPublishPath unambiguous.
+  - type: web
+    name: goproxyx-frontend
+    runtime: static
+    buildCommand: sh api-gateway-project/frontend/generate-config.sh
+    staticPublishPath: ./api-gateway-project/frontend
+    envVars:
+      # The browser calls the gateway directly over its public URL, so the
+      # frontend needs it baked in at build time. generate-config.sh turns
+      # this slug into https://<slug>.onrender.com.
+      - key: GATEWAY_HOST
+        fromService:
+          type: web
+          name: goproxyx-gateway
+          property: host
