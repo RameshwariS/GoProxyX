@@ -33,6 +33,7 @@ func main() {
 	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
 	defer rdb.Close()
 
+	// Ping Redis at startup to log whether it's reachable. The gateway can still start even if Redis is temporarily unreachable, but this log message helps with debugging.
 	pingCtx, cancelPing := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancelPing()
 	if err := rdb.Ping(pingCtx).Err(); err != nil {
@@ -43,14 +44,14 @@ func main() {
 
 	// --- routing ---------------------------------------------------------------
 	routes := []Route{
-		{Prefix: "/users", Proxy: newProxy(mustURL(userServiceURL))},
+		{Prefix: "/users", Proxy: newProxy(mustURL(userServiceURL))}, //newProxy builds the reverse proxy for that URL.
 		{Prefix: "/items", Proxy: newProxy(mustURL(itemServiceURL))},
 	}
 	router := newRouter(routes)
 
 	rateLimitCfg := middleware.RateLimitConfig{
-		Max:      10,
-		Rate:     2.0,
+		Max:      10,  //bucket size
+		Rate:     2.0, // refill
 		Timeout:  50 * time.Millisecond,
 		FailOpen: true, // preserve availability when Redis is temporarily unreachable.
 	}
@@ -94,8 +95,8 @@ func main() {
 		}
 		w.WriteHeader(http.StatusOK)
 	})
-
-	mux.Handle("/", protected)
+  // multiplexer-> request router
+	mux.Handle("/", protected)  //except ready and health, all other requests go through the protected chain passed through middleware chain.
 
 	// --- server --------------------------------------------------------------
 	srv := &http.Server{
@@ -106,7 +107,7 @@ func main() {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-
+	// It has to run in a goroutine because ListenAndServe blocks forever while the server runs. If it ran on the main goroutine, the shutdown code below would never be reached.
 	go func() {
 		slog.Info("gateway starting", "addr", srv.Addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -116,7 +117,7 @@ func main() {
 	}()
 
 	// --- graceful shutdown ---------------------------------------------------
-	quit := make(chan os.Signal, 1)
+	quit := make(chan os.Signal, 1) //buffered channel that can hold one OS signal.
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 

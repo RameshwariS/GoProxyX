@@ -32,7 +32,7 @@ func mustURL(raw string) *url.URL {
 	}
 	return target
 }
-
+// standard library's reverse proxy. It takes an incoming request, rewrites it to point at target (for example http://user-service:8080), forwards it, and streams the response back.
 func newProxy(target *url.URL) http.Handler {
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {

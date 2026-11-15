@@ -8,7 +8,7 @@ import (
 	"net/http"
 )
 
-type requestIDKey struct{}
+type requestIDKey struct{} // private
 
 // RequestID assigns every request an unpredictable identifier and returns it
 // in the response so clients can correlate failures with gateway logs.
